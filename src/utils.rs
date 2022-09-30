@@ -23,7 +23,15 @@ pub enum AsmErr<'a> {
     #[error("undefined symbol: {0}")]
     UndefinedSymbol(&'a str),
     #[error("unaligned jump")]
-    UnalignedJump
+    UnalignedJump,
+    #[error("bad directive: {0}")]
+    BadDirective(&'a str),
+    #[error("org not at start of program")]
+    OrgNotAtAtStart,
+    #[error("org/spaceto not word-aligned")]
+    UnalignedOrg,
+    #[error("spaceto to previous address")]
+    BackwardsSpaceto
 }
 pub type Result<'a, T> = std::result::Result<T, AsmErr<'a>>;
 
@@ -102,3 +110,70 @@ impl ExportOptions {
 pub enum ExportFormat {
     BareMetal
 }
+
+
+pub trait CollectUntil<T, F> {
+    fn collect_until(&mut self, predicate: F) -> Vec<T>;
+}
+impl<T, F: FnMut(&T) -> bool, I: Iterator<Item = T>> CollectUntil<T, F> for I {
+    fn collect_until(&mut self, predicate: F) -> Vec<T> {
+        let mut predicate = predicate;
+        let mut ret = Vec::new();
+        while let Some(item) = self.next() {
+            if predicate(&item) {
+                break
+            }
+            else {
+                ret.push(item)
+            }
+        }
+        ret
+    }
+}
+
+pub struct InsertableIter<I> {
+    iters: std::collections::VecDeque<I>
+}
+impl<I: Iterator> InsertableIter<I> {
+    pub fn new() -> Self {
+        Self {
+            iters: std::collections::VecDeque::new()
+        }
+    }
+    pub fn insert(&mut self, new: I) {
+        self.iters.push_front(new)
+    }
+    pub fn append(&mut self, new: I) {
+        self.iters.push_back(new)
+    }
+}
+impl<I: Iterator<Item = T>, T> Iterator for InsertableIter<I> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let current = self.iters.get_mut(0)?;
+            let next = current.next();
+            if next.is_some() {
+                break next
+            }
+            else {
+                self.iters.pop_front();
+            }
+        }
+    }
+}
+
+pub enum LineIter<'a> {
+    FromSource(std::iter::Enumerate<std::str::Lines<'a>>),
+    FromMacro(usize, std::str::Lines<'a>)
+}
+impl<'a> Iterator for LineIter<'a> {
+    type Item = (usize, &'a str);
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::FromMacro(line, iter) => iter.next().map(|i| (*line, i)),
+            Self::FromSource(iter) => iter.next()
+        }
+    }
+}
+pub type CodeIter<'a> = InsertableIter<LineIter<'a>>;

@@ -15,8 +15,8 @@ fn main() {
         eprintln!("input file argument is required")
     }
     if let Ok(code) = fs::read_to_string(&args[0]) {
-        let mut a = Assembler::new();
-        match a.feed(&code) {
+        let mut a = Assembler::new(&code);
+        match a.run() {
             Ok(_) => {
                 match a.export(&ExportOptions::new()) {
                     Ok(b) => {
@@ -47,19 +47,22 @@ struct Assembler<'a> {
     program: Vec<LineOuter<'a>>,
     idents: HashMap<&'a str, (u16, bool)>, // true if the ident is a label
     ctr: u16,
+    lines: CodeIter<'a>
 }
 impl<'a> Assembler<'a> { // housekeeping
-    pub fn new() -> Self {
+    pub fn new(code: &'a str) -> Self {
+        let mut lines = InsertableIter::new();
+        lines.insert(LineIter::FromSource(code.lines().enumerate()));
         Assembler {
             program: Vec::new(),
             idents: HashMap::new(),
-            ctr: 0
+            ctr: 0,
+            lines,
         }
     }
-    pub fn feed(&mut self, code: &'a str) -> std::result::Result<(), (AsmErr<'a>, usize)> {
-        for (i, l) in code.lines().enumerate() {
-            let i = i + 1;
-            self.do_line(l, i).map_err(|e| (e, i))?;
+    pub fn run(&mut self) -> std::result::Result<(), (AsmErr<'a>, usize)> {
+        while let Some((idx, line)) = self.lines.next() {
+            self.do_line(line, idx + 1).map_err(|e| (e, idx + 1))?
         }
         
         Ok(())
@@ -73,9 +76,10 @@ impl<'a> Assembler<'a> { // housekeeping
 
         for line in program {
             let mut line_bytes = self.export_line(_e, line.inner).map_err(|e| (e, line.position))?;
-            self.ctr += line_bytes.len() as u16;
+            self.ctr = self.ctr.wrapping_add(line_bytes.len() as u16);
             bytes.append(&mut line_bytes)
         }
+        
 
         Ok(bytes)
     }
@@ -85,47 +89,88 @@ impl<'a> Assembler<'a> { // export
     fn export_line(&mut self, _e: &ExportOptions, line: Line<'a>) -> Result<'a, Vec<u8>> {
         match line {
             Line::Instruction(i) => {
-                let [b1, b2] = match i {
-                    Instruction::I { opcode, rd, imm } => {
-                        let mut i = opcode.binary();
-                        i |= (rd as u16) << 4;
-                        i |= self.value(imm)? << 8;
-                        i
-                    }
-                    Instruction::M { opcode, ra, ro, rd } => {
-                        let mut i = opcode.binary();
-                        i |= (rd as u16) << 4;
-                        i |= (ro as u16) << 8;
-                        i |= (ra as u16) << 12;
-                        i
-                    }
-                    Instruction::J { opcode, addr } => {
-                        let dest = self.value(addr)?; // excess k
-                        if dest & 1 != 0 {
-                            return Err(AsmErr::UnalignedJump)
-                        }
-                        let from = self.ctr.wrapping_add(2);
-                        let offset = from.wrapping_sub(dest.wrapping_add(4096));
-                        if offset > 4096 {
-                            return Err(AsmErr::JumpTooLong)
-                        }
-                        let mut i = opcode.binary();
-                        i |= offset << 3;
-                        i
-                    }
-                    Instruction::R { opcode, rs, rd } => {
-                        let mut i = opcode.binary();
-                        i |= (rd as u16) << 8;
-                        i |= (rs as u16) << 12;
-                        i
-                    }
-                }.to_be_bytes();
-                Ok(vec![b1, b2])
+                self.export_instruction(_e, i)
             }
-            Line::Directive(_d) => {
-                Ok(vec![])
+            Line::Directive(d) => {
+                self.export_directive(_e, d)
             }
         }
+    }
+
+    fn export_directive(&mut self, _e: &ExportOptions, line: Directive<'a>) -> Result<'a, Vec<u8>> {
+        match line {
+            Directive::Org(dest) => {
+                self.ctr = dest;
+                Ok(vec![])
+            }
+            Directive::Space(amt) => {
+                let mut ret = Vec::new();
+                ret.resize(amt as usize, 0);
+                Ok(ret)
+            }
+            Directive::SpaceTo(dest) => {
+                let fill = dest.checked_sub(self.ctr).ok_or(AsmErr::BackwardsSpaceto)? as usize;
+                let mut ret = Vec::new();
+                ret.resize(fill, 0);
+                Ok(ret)
+            }
+            Directive::Data(v) => {
+                let [lb, hb] = self.value(v)?.to_le_bytes();
+                Ok(vec![lb, hb])
+            }
+            Directive::Set { src, dest } => {
+                let v = self.value(src)?;
+                if let Some((_, true)) = self.idents.insert(dest, (v, false)) {
+                    Err(AsmErr::DoubleLabel(dest))
+                }
+                else {
+                    Ok(vec![])
+                }
+
+            }
+        }
+    }
+
+    fn export_instruction(&mut self, _e: &ExportOptions, line: Instruction<'a>) -> Result<'a, Vec<u8>> {
+        let mut ret = Vec::new();
+        let bytes = match line {
+            Instruction::I { opcode, rd, imm } => {
+                let mut i = opcode.binary();
+                i |= (rd as u16) << 4;
+                i |= self.value(imm)? << 8;
+                i
+            }
+            Instruction::M { opcode, ra, ro, rd } => {
+                let mut i = opcode.binary();
+                i |= (rd as u16) << 4;
+                i |= (ro as u16) << 8;
+                i |= (ra as u16) << 12;
+                i
+            }
+            Instruction::J { opcode, addr } => {
+                let dest = self.value(addr)?; // excess k
+                if dest & 1 != 0 {
+                    return Err(AsmErr::UnalignedJump)
+                }
+                let from = self.ctr.wrapping_add(2);
+                let offset = dest.wrapping_add(4096).wrapping_sub(from);
+                //eprintln!("{} {} {}", dest, from, offset);
+                if offset > 4096 * 2 {
+                    return Err(AsmErr::JumpTooLong)
+                }
+                let mut i = opcode.binary();
+                i |= offset << 3;
+                i
+            }
+            Instruction::R { opcode, rs, rd } => {
+                let mut i = opcode.binary();
+                i |= (rd as u16) << 8;
+                i |= (rs as u16) << 12;
+                i
+            }
+        }.to_be_bytes();
+        ret.extend_from_slice(&bytes);
+        Ok(ret)
     }
 
     fn value(&self, v: Value<'a>) -> Result<'a, u16> {
@@ -147,7 +192,7 @@ impl<'a> Assembler<'a> { // parsing
     fn add_line(&mut self, l: Line<'a>, pos: usize) {
         let l = LineOuter { inner: l, position: pos };
         self.program.push(l);
-        self.ctr += 1;
+        self.ctr += 2;
     }
     fn add_label(&mut self, l: &'a str) -> Result<'a, ()> {
         if l.contains(['/']) {
@@ -182,12 +227,71 @@ impl<'a> Assembler<'a> { // parsing
 
         if line.starts_with('.') {
             // directive
-            Ok(())
+            self.parse_directive(&line[1..], pos)
         }
         else {
             // instruction
             self.parse_instruction(line, pos)
         }
+    }
+
+    fn parse_directive(&mut self, line: &'a str, pos: usize) -> Result<'a, ()> {
+        if line.trim().is_empty() {
+            return Err(AsmErr::BadDirective(line))
+        }
+        let mut parts = line.split_ascii_whitespace();
+        let directive_name = parts.next().unwrap(); // will always exist, line will never be empty
+        let inner = Line::Directive(match directive_name {
+            "org" => {
+                let dest = parse_int_literal(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                if dest & 1 != 0 {
+                    return Err(AsmErr::UnalignedOrg)
+                }
+                if self.ctr != 0 {
+                    return Err(AsmErr::OrgNotAtAtStart)
+                }
+                self.ctr = dest;
+                Directive::Org(dest)
+            }
+            "spaceto" => {
+                let dest = parse_int_literal(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                if dest & 1 != 0 {
+                    return Err(AsmErr::UnalignedOrg)
+                }
+                if dest.checked_sub(self.ctr).is_none() {
+                    return Err(AsmErr::BackwardsSpaceto)
+                }
+                self.ctr = dest;
+                Directive::SpaceTo(dest)
+            }
+            "space" => {
+                let mut amt = parse_int_literal(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                if amt & 1 != 0 {
+                    amt = amt.checked_add(1).ok_or(AsmErr::BadDirective(line))?
+                }
+                self.ctr = self.ctr.wrapping_add(amt);
+                Directive::Space(amt)
+            }
+            "data" => {
+                let value = Value::from_str(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                Directive::Data(value)
+            }
+            "set" => {
+                let name = parts.next().ok_or(AsmErr::BadDirective(line))?;
+                let value = Value::from_str(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                Directive::Set{ src: value, dest: name }
+            }
+            "macro" => {
+                let macro_contents = self.lines.collect_until(|l| l.1.trim() == ".endm");
+                eprintln!("{:?}", macro_contents);
+
+                todo!()
+            }
+            _ => return Err(AsmErr::BadDirective(line))
+        });
+        let line = LineOuter { inner, position: pos };
+        self.program.push(line);
+        Ok(())
     }
 
     fn parse_instruction(&mut self, line: &'a str, pos: usize) -> Result<'a, ()> {
