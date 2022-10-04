@@ -23,10 +23,17 @@ impl Opcode {
 			"adi" => Ok(Self::I(IFormat::Adi)),
 			"sbi" => Ok(Self::I(IFormat::Sbi)),
 			"ldi" => Ok(Self::I(IFormat::Ldi)),
+
 			"ld" => Ok(Self::M(MFormat::Ld)),
 			"st" => Ok(Self::M(MFormat::St)),
+			"ldb" => Ok(Self::M(MFormat::Ldb)),
+			"stb" => Ok(Self::M(MFormat::Stb)),
+
 			"rjmp" => Ok(Self::J(JFormat::Rjmp)),
 			"rjal" => Ok(Self::J(JFormat::Rjal)),
+			"rjz" => Ok(Self::J(JFormat::Rjz)),
+			"rjn" => Ok(Self::J(JFormat::Rjn)),
+
 			"add" => Ok(Self::R(RFormat::Add)),
 			"adc" => Ok(Self::R(RFormat::Adc)),
 			"sub" => Ok(Self::R(RFormat::Sub)),
@@ -41,18 +48,22 @@ impl Opcode {
 			"asr" => Ok(Self::R(RFormat::Asr)),
 			"rol" => Ok(Self::R(RFormat::Rol)),
 			"ror" => Ok(Self::R(RFormat::Ror)),
-			"sf" => Ok(Self::R(RFormat::Sf)),
-			"gf" => Ok(Self::R(RFormat::Gf)),
-			"int" => Ok(Self::R(RFormat::Int)),
-			"gr" => Ok(Self::R(RFormat::Gr)),
-			"push" => Ok(Self::R(RFormat::Push)),
-			"pop" => Ok(Self::R(RFormat::Pop)),
-			"mov" => Ok(Self::R(RFormat::Mov)),
-			"movsx" => Ok(Self::R(RFormat::Movsx)),
+
 			"jmp" => Ok(Self::R(RFormat::Jmp)),
 			"jz" => Ok(Self::R(RFormat::Jz)),
 			"jnz" => Ok(Self::R(RFormat::Jnz)),
 			"jn" => Ok(Self::R(RFormat::Jn)),
+
+			"psr" => Ok(Self::R(RFormat::Psr)),
+			"iret" => Ok(Self::R(RFormat::Iret)),
+			"sf" => Ok(Self::R(RFormat::Sf)),
+			"gf" => Ok(Self::R(RFormat::Gf)),
+
+			"push" => Ok(Self::R(RFormat::Push)),
+			"pop" => Ok(Self::R(RFormat::Pop)),
+			"mov" => Ok(Self::R(RFormat::Mov)),
+			"movsx" => Ok(Self::R(RFormat::Movsx)),
+			"int" => Ok(Self::R(RFormat::Int)),
 
             _ => Err(AsmErr::BadOpcode(s))
         }
@@ -77,25 +88,29 @@ impl IFormat {
 }
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MFormat {
-    Ld, St
+    Ld, St, Ldb, Stb
 }
 impl MFormat {
 	pub fn binary(&self) -> u16 {
 		match self {
 			Self::Ld => 0x4,
-			Self::St => 0x5
+			Self::St => 0x5,
+			Self::Ldb => 0x6,
+			Self::Stb => 0x7
 		}
 	}
 }
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum JFormat {
-    Rjmp, Rjal
+    Rjmp, Rjal, Rjz, Rjn
 }
 impl JFormat {
 	pub fn binary(&self) -> u16 {
 		match self {
-			Self::Rjmp => 0x6,
-			Self::Rjal => 0x7
+			Self::Rjmp => 0xc,
+			Self::Rjal => 0xd,
+			Self::Rjz => 0xe,
+			Self::Rjn => 0xf
 		}
 	}
 }
@@ -104,9 +119,10 @@ pub enum RFormat {
     Add, Adc, Sub, Sbc,
     And, Not, Or, Xor,
     Lsl, Lsr, Asl, Asr, Rol, Ror,
-    Sf, Gf, Int, Gr,
+    Psr, Iret, Sf, Gf,
     Push, Pop, Mov, Movsx,
-	Jmp, Jz, Jnz, Jn
+	Jmp, Jz, Jnz, Jn,
+	Int
 }
 impl RFormat {
 	pub fn binary(&self) -> u16 {
@@ -127,22 +143,23 @@ impl RFormat {
 			Self::Asr => 0xb9,
 			Self::Rol => 0xc9,
 			Self::Ror => 0xd9,
-
-			Self::Gf  => 0xe9,
-			Self::Sf  => 0xf9,
-
+			
 			Self::Jmp => 0x08,
 			Self::Jz  => 0x18,
 			Self::Jnz => 0x28,
 			Self::Jn  => 0x38,
+
+			Self::Psr => 0x48,
+			Self::Iret => 0x58,
+			Self::Gf  => 0x68,
+			Self::Sf  => 0x78,
 
 			Self::Push => 0x88,
 			Self::Pop => 0x98,
 			Self::Mov => 0xa8,
 			Self::Movsx => 0xb8,
 
-			Self::Int => 0x0a,
-			Self::Gr => 0x1a
+			Self::Int => 0xc8
 		}
 	}
 }

@@ -4,17 +4,25 @@ use std::collections::HashMap;
 use utils::*;
 use std::fs;
 use std::env::args;
+use std::io::{stdin, Read};
 
 mod instruction;
 mod directive;
 mod utils;
 
 fn main() {
-    let args: Vec<String> = args().skip(1).collect(); // skip command name
+    let mut args: Vec<String> = args().skip(1).collect(); // skip command name
     if args.is_empty() {
-        eprintln!("input file argument is required")
+        args.push(String::from("-"))
     }
-    if let Ok(code) = fs::read_to_string(&args[0]) {
+    let code_read = if args[0] == "-" {
+        let mut buf = String::new();
+        stdin().read_to_string(&mut buf).map(|_| buf)
+    }
+    else {
+        fs::read_to_string(&args[0])
+    };
+    if let Ok(code) = code_read {
         let mut a = Assembler::new(&code);
         match a.run() {
             Ok(_) => {
@@ -40,8 +48,8 @@ fn main() {
 }
 
 /*
-assembler goes through each line in turn and tries to parse it into a Line
-if the line starts with . it's a directive, else it's an instruction
+    assembler goes through each line in turn and tries to parse it into a Line
+    if the line starts with . it's a directive, else it's an instruction
 */
 struct Assembler<'a> {
     program: Vec<LineOuter<'a>>,
@@ -152,7 +160,7 @@ impl<'a> Assembler<'a> { // export
                 if dest & 1 != 0 {
                     return Err(AsmErr::UnalignedJump)
                 }
-                let from = self.ctr.wrapping_add(2);
+                let from = self.ctr;
                 let offset = dest.wrapping_add(4096).wrapping_sub(from);
                 //eprintln!("{} {} {}", dest, from, offset);
                 if offset > 4096 * 2 {
@@ -281,12 +289,12 @@ impl<'a> Assembler<'a> { // parsing
                 let value = Value::from_str(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
                 Directive::Set{ src: value, dest: name }
             }
-            "macro" => {
+            /*"macro" => {
                 let macro_contents = self.lines.collect_until(|l| l.1.trim() == ".endm");
                 eprintln!("{:?}", macro_contents);
 
                 todo!()
-            }
+            }*/
             _ => return Err(AsmErr::BadDirective(line))
         });
         let line = LineOuter { inner, position: pos };
@@ -403,7 +411,7 @@ impl<'a> Assembler<'a> { // parsing
                     Ok(Line::Instruction(Instruction::R { opcode, rs: 0, rd: 0 }))
                 }
             }
-            RFormat::Sf => {
+            RFormat::Sf | RFormat::Psr | RFormat::Iret => {
                 if operands.len() != 1 {
                     Err(AsmErr::BadOperandNum { got: operands.len(), expected: 1 })
                 }
@@ -412,7 +420,7 @@ impl<'a> Assembler<'a> { // parsing
                     Ok(Line::Instruction(Instruction::R { opcode, rs, rd: 0 }))
                 }
             }
-            RFormat::Gr | RFormat::Gf | RFormat::Not => {
+            RFormat::Gf | RFormat::Not => {
                 if operands.len() != 1 {
                     Err(AsmErr::BadOperandNum { got: operands.len(), expected: 1 })
                 }
