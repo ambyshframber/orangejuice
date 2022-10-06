@@ -5,10 +5,12 @@ use utils::*;
 use std::fs;
 use std::env::args;
 use std::io::{stdin, Read};
+use preprocessor::preprocess;
 
 mod instruction;
 mod directive;
 mod utils;
+mod preprocessor;
 
 fn main() {
     let mut args: Vec<String> = args().skip(1).collect(); // skip command name
@@ -23,13 +25,20 @@ fn main() {
         fs::read_to_string(&args[0])
     };
     if let Ok(code) = code_read {
-        let mut a = Assembler::new(&code);
-        match a.run() {
-            Ok(_) => {
-                match a.export(&ExportOptions::new()) {
-                    Ok(b) => {
-                        if let Err(_) = fs::write(args.get(1).unwrap_or(&"a.out".into()), &b) {
-                            eprintln!("failed to write output file")
+        match preprocess(&code) {
+            Ok(code) => {
+                let mut a = Assembler::new(&code);
+                match a.run() {
+                    Ok(_) => {
+                        match a.export(&ExportOptions::new()) {
+                            Ok(b) => {
+                                if let Err(_) = fs::write(args.get(1).unwrap_or(&"a.out".into()), &b) {
+                                    eprintln!("failed to write output file")
+                                }
+                            }
+                            Err((e, line)) => {
+                                eprintln!("error on line {line}: {e}")
+                            }
                         }
                     }
                     Err((e, line)) => {
@@ -37,8 +46,8 @@ fn main() {
                     }
                 }
             }
-            Err((e, line)) => {
-                eprintln!("error on line {line}: {e}")
+            Err(e) => {
+                eprintln!("preprocessor error: {}", e)
             }
         }
     }
