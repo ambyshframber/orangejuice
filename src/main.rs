@@ -27,6 +27,7 @@ fn main() {
     if let Ok(code) = code_read {
         match preprocess(&code) {
             Ok(code) => {
+                //println!("{}", code);
                 let mut a = Assembler::new(&code);
                 match a.run() {
                     Ok(_) => {
@@ -70,12 +71,14 @@ impl<'a> Assembler<'a> { // housekeeping
     pub fn new(code: &'a str) -> Self {
         let mut lines = InsertableIter::new();
         lines.insert(LineIter::FromSource(code.lines().enumerate()));
-        Assembler {
+        let mut a = Assembler {
             program: Vec::new(),
             idents: HashMap::new(),
             ctr: 0,
             lines,
-        }
+        };
+        a.idents.insert("len", (0, true));
+        a
     }
     pub fn run(&mut self) -> std::result::Result<(), (AsmErr<'a>, usize)> {
         while let Some((idx, line)) = self.lines.next() {
@@ -144,6 +147,14 @@ impl<'a> Assembler<'a> { // export
                     Ok(vec![])
                 }
 
+            }
+            Directive::Ascii(s) => {
+                let mut ret: Vec<u8> = s.bytes().collect();
+                self.idents.insert("len", (ret.len() as u16, true));
+                if ret.len() & 1 == 1 { // length is odd
+                    ret.push(0)
+                }
+                Ok(ret)
             }
         }
     }
@@ -220,6 +231,7 @@ impl<'a> Assembler<'a> { // parsing
                 Err(AsmErr::DoubleLabel(l))
             }
             else {
+                println!("{}: {:04x}", l, self.ctr);
                 Ok(())
             }
         }
@@ -291,12 +303,24 @@ impl<'a> Assembler<'a> { // parsing
             }
             "data" => {
                 let value = Value::from_str(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
+                self.ctr = self.ctr.wrapping_add(2);
                 Directive::Data(value)
             }
             "set" => {
                 let name = parts.next().ok_or(AsmErr::BadDirective(line))?;
                 let value = Value::from_str(parts.next().ok_or(AsmErr::BadDirective(line))?)?;
                 Directive::Set{ src: value, dest: name }
+            }
+            "ascii" => {
+                let value = line.trim().split_once(' ').ok_or(AsmErr::BadDirective(line))?.1;
+                let len = if value.len() & 1 == 1 {
+                    value.len() + 1
+                }
+                else {
+                    value.len()
+                };
+                self.ctr += len as u16;
+                Directive::Ascii(value)
             }
             /*"macro" => {
                 let macro_contents = self.lines.collect_until(|l| l.1.trim() == ".endm");
@@ -412,7 +436,7 @@ impl<'a> Assembler<'a> { // parsing
 
     fn parse_r_format(&mut self, opcode: RFormat, operands: Vec<&'a str>, pos: usize) -> Result<'a, ()> {
         let i = match opcode {
-            RFormat::Int => {
+            RFormat::Int | RFormat::Nop => {
                 if operands.len() != 0 {
                     Err(AsmErr::BadOperandNum { got: operands.len(), expected: 0 })
                 }

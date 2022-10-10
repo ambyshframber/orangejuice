@@ -28,16 +28,16 @@ impl<'a> MacroManager<'a> {
     pub fn go(&mut self) -> PreResult<()> {
         loop {
             if let Some(res) = scrub_until_any_at_start(self.source, &self.lookup_names) {
+                let code = &self.source[..res.idx];
+                self.output.push_str(code);
                 if res.needle == 0 { // macro decl
-                    let mac_start = res.idx;
                     let rem_source = res.remainder;
-                    let code = &self.source[..mac_start];
-                    self.output.push_str(code);
     
                     if let Some((idx, new_source)) = scrub_until_at_start(rem_source, ".endm") {
                         let text_start = rem_source.char_indices().position(|c| c.1 == '\n').unwrap(); // unwrap ok, must exist
                         let macro_text = &rem_source[text_start + 1..idx];
-                        let macro_decl_line = rem_source.lines().next().unwrap();
+                        let macro_decl_line_full = rem_source.lines().next().unwrap();
+                        let macro_decl_line = macro_decl_line_full.split_once(';').map(|s| s.0).unwrap_or(macro_decl_line_full);
                         let mut macro_decl = macro_decl_line.split_ascii_whitespace().skip(1);
                         let macro_name = macro_decl.next().ok_or_else(|| MacErr::InvalidDecl(String::from(macro_decl_line)))?;
                         let macro_args = macro_decl.collect();
@@ -58,7 +58,8 @@ impl<'a> MacroManager<'a> {
                 else { // macro invoc
                     let name = self.lookup_names[res.needle];
                     let macr = &self.macros[name]; // will always exist
-                    let invoc = res.remainder.lines().next().unwrap();
+                    let invoc_full = res.remainder.lines().next().unwrap();
+                    let invoc = invoc_full.split_once(';').map(|s| s.0).unwrap_or(invoc_full);
                     let args: Vec<&str> = invoc.split_ascii_whitespace().skip(1).collect();
                     macr.expand(args, self.ctr, &mut self.output)?;
                     self.ctr += 1;

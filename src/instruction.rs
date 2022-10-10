@@ -63,7 +63,9 @@ impl Opcode {
 			"pop" => Ok(Self::R(RFormat::Pop)),
 			"mov" => Ok(Self::R(RFormat::Mov)),
 			"movsx" => Ok(Self::R(RFormat::Movsx)),
+
 			"int" => Ok(Self::R(RFormat::Int)),
+			"nop" => Ok(Self::R(RFormat::Nop)),
 
             _ => Err(AsmErr::BadOpcode(s))
         }
@@ -122,7 +124,7 @@ pub enum RFormat {
     Psr, Iret, Sf, Gf,
     Push, Pop, Mov, Movsx,
 	Jmp, Jz, Jnz, Jn,
-	Int
+	Int, Nop
 }
 impl RFormat {
 	pub fn binary(&self) -> u16 {
@@ -159,7 +161,8 @@ impl RFormat {
 			Self::Mov => 0xa8,
 			Self::Movsx => 0xb8,
 
-			Self::Int => 0xc8
+			Self::Int => 0xc8,
+			Self::Nop => 0xd8
 		}
 	}
 }

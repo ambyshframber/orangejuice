@@ -6,5 +6,6 @@ pub enum Directive<'a> {
     Org(u16),
     SpaceTo(u16),
     Space(u16),
-    Data(Value<'a>)
+    Data(Value<'a>),
+    Ascii(&'a str),
 }
